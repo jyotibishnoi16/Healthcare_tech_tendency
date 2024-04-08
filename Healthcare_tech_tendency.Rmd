@@ -1,0 +1,1035 @@
+
+---
+title: "MGT7179ReportTemV01"
+author1:
+  - Name: Jyoti, Family Name; Bishnoi
+author2:
+- Student ID- 40385928
+editor_options:
+  markdown:
+    wrap: 60
+    references:
+      location: block
+output: 
+  bookdown::pdf_document2:
+    template: /Users/jyotismac/Library/CloudStorage/OneDrive-Queen'sUniversityBelfast/Semester 2/01 Advanced Analytics/Lab sessions/MGT7179LatexTempV02.tex
+    keep_tex: true
+    pandoc_args: "--listings"
+  xaringan::ninjutsu:
+    css: [default, chocolate, metropolis-fonts]
+knitr:
+  root.dir: /Users/jyotismac/Documents/BUSINESS ANALYTICS/DATA SETS
+date: "2023-03-01"
+---
+
+```{r setup, include=FALSE,cache=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(tinytex.verbose = TRUE)
+
+```
+
+
+```{r load library, echo=FALSE, include=FALSE}
+library(readxl)
+library(openxlsx)
+library(dlookr)
+library(dplyr)
+library(pROC)
+library(ggplot2)
+library(kableExtra)
+
+```
+
+
+# Introduction
+
+The given data set ([Appendix:1](#1)), which was obtained from a research, evaluating technology tendency, shows the attitude that healthcare professionals (such as clinicians and nurses) have towards new technologies. The objective of this report is to build a predictive model using supervised learning machine learning methods to predict tech tendency of the workers.
+
+
+```{r Data Load, echo=FALSE}
+
+# Load Data
+df <- read.csv("/Users/jyotismac/Documents/BUSINESS ANALYTICS/DATA SETS/dataset-four_states- GA - PR - UT - AR - student 160 .csv")
+
+```
+
+
+## Statistical Summary  
+
+The statistical summary [(Appendix:2)](#2) of the data  was run and observations are as following.  
+
+* Missing values in Gender, final_primary_speciality, final_medical_school
+* Zero values in final_grad_year, Rank, global.Rank
+* Negative and zero value in Accuracy
+
+```{r Stats Summary, echo=FALSE, include=FALSE}
+
+# check dimension of the dataframe
+dim(df)
+
+# check column names and first 6 observations
+head(df) 
+
+# summary of all variables
+summary(df) 
+
+# summary of only categorical variable
+diagnose_category(df) 
+
+#converting categorical to factor
+df1 <- df%>%
+  mutate_if(is.character, as.factor) 
+summary(df1)
+
+# check null values in data
+sum(!complete.cases(df1)) 
+sum(df1$final_grad_year==0)
+sum(df1$Rank==0)
+
+```
+* **Assessing Zero/Missing Value data**: Zero valued observations in final_grad_year and Rank accounts for about 74% of the data (31847 observations out of 43055). It is also found that observations having zero values in final_grad_year and Rank have missing values in all other predictor variables pertaining to the worker.  
+
+```{r Zero Value, echo=TRUE, include=TRUE}
+
+# subsetting zero values in final_grad_year and Rank
+df_unclean <- subset(df, df$final_grad_year == 0 |
+                      df$Rank == 0)
+
+# Check dimension of the unclean data
+dim(df_unclean)
+```
+
+
+## Data Exploration and Preprocessing
+
+Firstly, 0 values in certain columns were replaced with NA values, and the resulting rows were dropped ([Appendix:3a](#3a)). Secondly, duplicates in the ID column were replaced with the mean values of their corresponding group for Rank and Global.Rank columns, and duplicates were then dropped ([Appendix:3b](#3b)). Thirdly, observations with an accuracy score below 0.3 were dropped to reduce data loss and bias ([Appendix:3c](#3c)). 
+
+```{r Null values, echo=FALSE, include=FALSE}
+
+# Changing 0 values to NA for final grad year
+df1$final_grad_year[df1$final_grad_year == 0] <- NA
+
+# checking null values
+sum(!complete.cases(df1$final_grad_year)) 
+
+# Changing 0 values to NA for rank
+df1$Rank[df1$Rank == 0] <- NA 
+sum(!complete.cases(df1$Rank)) 
+
+# Changing 0 values to NA for rank
+# df1$Global.Rank[df1$Global.Rank==0] <- NA 
+# sum(!complete.cases(df1$Rank))
+
+# dropping null value rows
+df1_clean <- df1[complete.cases(df1$final_grad_year),] 
+
+df1_clean <- df1_clean[complete.cases(df1_clean$Rank),]
+
+# df1_clean <- df1_clean[complete.cases(df1_clean$Global.Rank),]
+
+sum(!complete.cases(df1_clean))
+
+```
+
+```{r Dealing Duplicates, echo=FALSE, include=FALSE}
+# Check total duplicates
+sum(duplicated(df$ID))
+
+# grouping by ID to identify duplicates, replacing Rank & global rank with mean of duplicate group and dropping duplicate rows
+df_clean <- as.data.frame(df1_clean%>%
+  group_by(ID)%>%
+  mutate(Rank = ifelse(n()>1, round(mean(Rank)), Rank))%>%
+  mutate(Global.Rank = ifelse(n()>1, round(mean(Global.Rank)), Global.Rank))%>%
+  ungroup(ID)%>%
+  distinct(ID,.keep_all = TRUE))
+
+# Check dimension of data
+dim(df_clean)
+```
+
+
+```{r Dealing Accuracy, echo=FALSE, include=FALSE}
+
+df_clean <- df_clean[df_clean$accuracy > 0.2,]
+
+```
+
+### Graphical exploration
+
+* On graphical exploration it is observed that state GA has highest observations.  
+* Likewise, observations are on higher side in Family Medicine, Internal Medicine and Cardiology under primary speciality.  
+* It is also observed that more workers are male compared to females.  
+* Barplot Gloabl Rank grouped by states shows that observations of GA state are distributed across all ranks of college while workers from state AR mostly belong to higher ranked college.  
+* histogram of mean_tech grouped by states show that data is mostly normally distributed for stateGA.
+
+```{r Visuals, echo=TRUE, include=TRUE}
+
+# barplot of state
+ggplot(df_clean, mapping=aes(State, fill=State))+
+  geom_bar(position="dodge")+  #'["dodge" to arrange in side by side manner]
+  labs(title="barplot of State", x="States")
+
+# frequency distribution of Primary Speciality
+freq_table <- table(df_clean$final_primary_speciality) #creating a frequency table of the variable
+
+dfn <- data.frame(value = names(freq_table), frequency = freq_table) # creating a dataframe of variable classes and their frequencies
+
+ggplot(dfn, aes(x = value, y = frequency.Freq, fill=value)) +
+  geom_bar(stat = "identity") +
+  labs(title="Frequency distribution of Primary Specialty", x="Primary Specialty", y= "Frequency")+
+  theme(axis.text.x = element_text(size= 6,angle = 90, vjust = 0.5, hjust = 1), legend.position = "none")
+
+# barplot of gender
+ggplot(df_clean, mapping=aes(final_gender, fill=State))+
+  geom_bar(position="dodge")+  #'["dodge" to arrange in side by side manner]
+  labs(title="barplot of Gender", x="Gender")
+
+# histogram of Rank
+ggplot(df_clean, aes(Rank, fill=State))+
+  geom_histogram(position="identity", bins=20)+
+  labs(title="histogram of Rank", x="Rank")
+
+# histogram of Global Rank
+ggplot(df_clean, aes(Global.Rank, fill=State))+
+  geom_histogram(position="identity", bins=20)+
+  labs(title="histogram of Global Rank", x="Global Rank")
+
+# histogram of Mean_tech
+ggplot(df_clean, aes(mean_tech, fill=State))+
+  geom_histogram(position="identity", bins=50)+
+  labs(title="histogram of mean_tech", x="Mean_tech")
+
+```
+
+### Density distribution of response variables- (code in [Appendix:3d](#3d))   
+
+* Density distribution of all 4 response variables was checked.  
+* Following density distribution of mean_tech variable shows almost normal distribution of the data compared to other response variables. Since mean is a good measure of central tendency as it represents the centre of distribution, therefore mean_tech is chosen as target variable for further analysis.
+
+```{r Density Distribution, echo=FALSE, include=TRUE}
+
+# Density plot of mean_tech
+plot(density(df_clean$mean_tech), main="Density Plot of mean_tech Variable", xlab="mean_tech")
+
+# Density plot of mean_tech
+plot(density(df_clean$min_tech), main="Density Plot of min_tech Variable", xlab="min_tech")
+
+# Density plot of mean_tech
+plot(density(df_clean$max_tech), main="Density Plot of max_tech Variable", xlab="max_tech" )
+
+# Density plot of mean_tech
+plot(density(df_clean$median_tech),main="Density Plot of median_tech Variable", xlab="median_tech")
+
+```
+
+### Converting Response Variable into Binary- (code in [Appendix:3e](#3e))   
+Since we want to predict the tech tendency of workers, target variable (mean_tech) was converted into binary response (1 for yes and 0 for No). Mean_tech tendency below mean of all the observations were treated as no while yes otherwise.  
+
+```{r Choose response var, echo=FALSE, include=FALSE}
+# creating a copy of clean data
+df_new <- df_clean 
+
+# calculating mean of the column
+mean_x1 <- mean(df_new$mean_tech) 
+
+# replacing values with 0 & 1
+df_new$x1_mean_tech <- ifelse(df_new$mean_tech > mean_x1,1,0)
+
+# dropping variables
+df_new <- df_new[-c(1:3,5:8,12:13)]
+```
+
+
+## Creating Dataset A & B for further analysis  
+
+### Subset data on frequnecy of States- (code in [Appendix:5a](#5a))
+
+* Data A was created by subset on GA state for analysis as it had highest number of observations identified through frequency tables for each State.
+* Specialities for dataset A were chosen using Lasso feature selection model.
+* All states except GA were included in dataset B.
+
+```{r State Subset, echo=FALSE, include=FALSE}
+library(knitr)
+# Frequency of State variable
+df_clean %>% 
+  count(State) %>% 
+  arrange(desc(n)) %>% 
+  kable(col.names = c("State", "Count"), align = "c", caption = "Specialty counts in decreasing order")
+
+# Frequency of primary speiciality variable
+df_clean %>% 
+  count(final_primary_speciality) %>% 
+  arrange(desc(n)) %>% 
+  kable(col.names = c("Specialty", "Count"), align = "c", caption = "Specialty counts in decreasing order")
+
+# creating Dataset A by subsetting on State GA
+
+df_A <- subset(df_new,State == "GA")
+df_A$State <-  droplevels(df_A$State)
+levels(df_A$State)
+
+# creating Dataset B by subsetting on all states except GA
+
+df_B <- df_new[df_new$State %in% c("AR", "PR","UT"),]
+df_B$State <- droplevels(df_B$State)
+levels(df_B$State)
+
+```
+
+### Lasso for feature selection- to choose final_primary_speciality- (code in [Appendix:5b](#5b))
+
+To prevent overfitting and complexity in the presence of a large number of levels in the final primary speciality variable, a Lasso regression model was used to select the top 10 primary specialities. The Lasso method selects variables by shrinking some of the coefficients to zero by adding a penalty and thus removing those that do not contribute to the model. The best lambda value was found to be 0.01, resulting in 29 relevant predictor variables. However, only the top 10 specialities were chosen based on their coefficients to reduce model complexity and maintain sufficient observations for analysis.
+
+```{r LASSO, echo=FALSE, include=FALSE}
+library(glmnet)
+
+# dropping state column since only one state is chosen
+df_A01 <- df_A[-1] 
+
+# creating dummy variables of predictor variables
+x = model.matrix(x1_mean_tech~.,df_A01)[,-1]
+
+# separating response variable
+y = df_A01$x1_mean_tech
+
+# splitting train and test data
+set.seed(40385928)
+train.l = sample(1:nrow(x), nrow(x)/2)
+test.l = (-train.l)
+y.test.l = y[test.l]
+
+
+# creating a lambda sequence
+grid = 10^seq(10, -2, length = 100)
+
+# Fit Lasso model with cross-validation to find best lambda
+set.seed(40385928)
+cv_modelA01 <- cv.glmnet(x[train.l,], y[train.l], family="binomial", alpha=1, type.measure = "deviance", nfolds =10)
+
+# Plot the cross-validation error as a function of lambda
+plot(cv_modelA01)
+
+# Select the best lambda value
+best_lambdaA01 <- cv_modelA01$lambda.min
+best_lambdaA01
+
+# fitting lasso model on train set
+set.seed(40385928)
+lasso.mod=glmnet(x[train.l,], y[train.l],family="binomial",type.measure = "deviance", alpha=1, lambda=grid)
+plot(lasso.mod, label=TRUE)
+plot(lasso.mod, xvar="lambda", label=TRUE, lwd=6)
+
+# prediction using lasso
+set.seed(40385928)
+lasso.pred <- predict(lasso.mod,family="binomial", s = best_lambdaA01, newx = x[test.l,])
+pred_class <- ifelse(lasso.pred >= 0.5, 1, 0)
+accuracy <- mean(pred_class == y[test.l])
+accuracy
+
+# running lasso on whole data set
+set.seed(40385928)
+out = glmnet(x, y, alpha=1, family="binomial", type.measure = "deviance", lambda = grid)
+
+# extracting coeficients of lasso model
+set.seed(40385928)
+lasso.coef=predict(out, type="coefficients", s=best_lambdaA01)[1:79,]
+lc <- lasso.coef[lasso.coef!=0]
+
+# tabulate coefficients
+lc_df <- data.frame(variable = names(lc)[-1], coefficient = lc[-1])
+
+# extracting top ten coefficients
+top10 <- head(lc_df[order(abs(lc_df$coefficient), decreasing = TRUE), ], 10)
+
+```
+
+
+```{r PS10, echo=TRUE, include=TRUE}
+
+# plotting the coefficients of relevant predictor variables
+ggplot(lc_df, aes(x = variable, y = coefficient)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme(axis.text.x = element_text(size=6, angle = 90, vjust = 0.5, hjust=1)) +
+  xlab("Variable") + ylab("Coefficient")
+```
+
+### Dataset A subset on top primary specialities
+
+* Dataset A subset on top 10 primary specialities as obtained through Lasso regularisation. [Appendix: 5d](#5d)
+
+```{r PS subset, echo=FALSE, include=FALSE}
+df_A02 <- df_A01[df_A01$final_primary_speciality %in% 
+                     c("OPHTHALMOLOGY","OBSTETRICS/GYNECOLOGY","CARDIOVASCULAR DISEASE (CARDIOLOGY)", "DERMATOLOGY","INTERVENTIONAL PAIN MANAGEMENT","PSYCHIATRY","UROLOGY", "RHEUMATOLOGY","ORTHOPEDIC SURGERY","MEDICAL ONCOLOGY"),]
+
+# dropping null levels
+df_A02$final_primary_speciality <- droplevels(df_A02$final_primary_speciality)                   
+levels(df_A02$final_primary_speciality)
+
+```
+
+\newpage
+
+# SUPERVISED MACHINE LEARNING MODELS ON DATASET A
+
+## Method 1: Logistic Regression (LR)
+
+* Due to its simplicity, interpretability, and flexibility, the logistic regression technique is used to model the probability of a binary response variable. It is also adept at managing categorical predictors, continuous predictors, or a mix of both. 
+
+* Dataset is split into train and test in the ratio of 80:20
+
+```{r Data split, echo=TRUE, include=TRUE}
+library(caret)
+
+# converting response variable into factor
+df_A02$x1_mean_tech <- as.factor(df_A02$x1_mean_tech)
+
+# set seed for randomness
+set.seed(40385928) #'[for random sampling]
+
+# creating partition to split data into 80-20 ratio
+index <- createDataPartition(df_A02$x1_mean_tech, p=0.8, list=FALSE) 
+
+# train data set containing 80% data
+train <- df_A02[index,] #
+
+# test data set containing 20% data
+test <- df_A02[-index,]
+
+```
+
+```{r LR, echo=TRUE, include=TRUE}
+
+### LR model fitting on train dataset 
+glm.fits <- glm(x1_mean_tech ~ final_primary_speciality + final_gender + Global.Rank + accuracy, data = train, family = "binomial")
+summary(glm.fits)
+
+# prediction on test dataset using trained model
+predictions <- predict.glm(glm.fits, test,family = "binomial", type="response") 
+
+# changing numeric values of predictions into factor ; >0.5 as 1 and <0.5 as 0
+class_predict <- as.factor(ifelse(predictions > 0.5, "1", "0"))  
+
+```
+
+### Assumptions Check for LR
+Following assumptions have been checked for the model. 
+
+* **Predicted Probabilities** : The model is predicting probabilities of outcome class reasonably correctly.  
+* **Analysing the residuals** : This assumption is also complied as only 5 observations have standardised residuals outside of + 1.96 and -1.96.  
+* **Examining the influential cases** : This assumption is treated as complied if following two paramters are satisfied.  
+  * *Cook's distance*: There are no observatios having cooks distance greater than 1. Hence complied.  
+  * *Leverage* : In our given cases, total of 155 observations exceed this level which is on the higher side. Thus this assumption is slightly violated.  
+  **Examining Multicolinearity** : This is also complied as there is no predictor having GVIF higher than 3 thus showing no presence of multicolinearity.  
+  
+```{r LR Assum Check, echo=TRUE, include=TRUE}
+## Assumptions checking
+
+# predicted probabilities
+pred.prob <- ifelse(fitted(glm.fits) > 0.5, 1, 0)
+head(data.frame(pred.prob, train$x1_mean_tech))
+
+# Analysing the residuals
+std_resids <- rstandard(glm.fits)
+student_resids <- rstudent(glm.fits)
+cat("The number of observations having standardised residuals outside of +- 1.96 are", sum(std_resids > 1.96), " which is less than 5% of total observations. \n")
+
+# Examining the influential cases
+lr_cook <-  cooks.distance(glm.fits)
+cat("The number of observations whose cooks distance is greater than 1 are", sum(lr_cook > 1), "\n")
+cat("\n")
+num_of_pred = 4
+lev <-  hatvalues(glm.fits)
+cat("The number of observations whose leverage value is greater than acceptable level are", sum(lev > 3 * ((num_of_pred+1)/nrow(train))), "\n")
+
+# Examining Multicollinearity
+library(car)
+vif(glm.fits)
+
+```
+
+### **LR- Results**:  
+
+  * The model accuracy is 84%. 
+  * Sensitivity (True positive rate) and Specificity (True negative rate) are 0.9813 and 0.6400 respectively.
+  * The area under ROC is 0.811. 
+  * No Information Rate is 0.57 which means most frequent class accounts for 57% of instances of the dataset.
+  * The model shows that 6 out of 10 primary specialities are statistically significant- Dermatology, Hematology, Obstetrics/Gynaecology, Opthamology, Psychiatry, Rheumatology as they have very low p-values (< 0.05). These specialities have negative influence on mean tech tendency as reflective from negative coefficients of estimates which means with one unit increase in these specialities the log odds of technology tendency decreases by given coefficient estimates compared to reference speciality.
+
+```{r LR Results, echo=TRUE, include=TRUE}
+
+# checking performance of prediction model
+outcome_lr <- postResample(class_predict, test$x1_mean_tech) 
+acc_lr <- outcome_lr["Accuracy"]
+
+# Confusion Matrix - to check True/false positive/negatives]
+cm_lr <- confusionMatrix(data=class_predict, test$x1_mean_tech)  
+cm_lr  
+cat("The accuracy of Logistic Regression model is", acc_lr, "\n")  
+
+# Plot of confusion matrix
+plot(cm_lr$table, col = c("white", "blue"), 
+     main = paste("Confusion Matrix\n Logistic Regression"))
+
+# extracting coeficients of LR model
+coef_summary <- summary(glm.fits)$coef
+kable(coef_summary, caption = "Logistic Regression Coefficients", 
+      align = "c", booktabs = TRUE)
+
+# ROC Curve
+roc_lr <- roc(response = test$x1_mean_tech, predictor = as.numeric(class_predict))
+plot(roc_lr, main = "ROC Curve of LR", col = "blue", print.auc = TRUE, legacy.axes = TRUE)
+
+```
+
+\newpage
+## Method 2: Linear Discriminant Analysis (LDA)
+
+* LDA method has been chosen as it aims to identify a linear combination of variables by calculating mean and variance of each variable of each class and using this information estimates the **posterior probability** of an observation belonging to each class.  
+* LDA presupposes that the covariance matrix is constant across all classes and that the variables have a multivariate normal distribution which is evident from graphical visualisation of our data.
+
+```{r LDA, echo=TRUE, include=TRUE}
+
+library(MASS)
+
+df_A02_lda <- df_A02
+
+# set random seed
+set.seed(40385928) #'[for random sampling]
+
+# splitting data into 80: 20 ratio
+index_lda <- createDataPartition(df_A02_lda$x1_mean_tech, p=0.8, list=FALSE) 
+train_lda <- df_A02_lda[index_lda,]
+test_lda <- df_A02_lda[-index_lda,] 
+
+# Use the predictor names to construct the formula
+formula = x1_mean_tech ~ final_primary_speciality + Global.Rank + accuracy + final_gender
+
+# calculating prior probabilities of training data set to be used in LDA Model
+priorp <- as.vector(prop.table(table(train_lda$x1_mean_tech)))[1:2]
+priorp
+
+# fitting LDA model 
+lda.fit = lda(formula = formula, prior = priorp, data = train_lda)
+
+# predictions on test data using fitted model
+lda.pred = predict(lda.fit, test_lda)
+
+```
+
+### LDA Assumptions
+
+* Checking for Assumption of Normality: The LD coefficient plot reveals that the scores for each group have distributions that are roughly normal, demonstrating that the LDA's assumption of normality is satisfied.
+
+```{r LDA Assum 1 check, echo=TRUE, include=TRUE}
+
+# Extract LD1 scores for each observation
+scores_lda <- predict(lda.fit)$x[,1]
+lda.fit$xlevels
+# Combine LD1 scores with species labels
+data_lda <- data.frame(LD1 = scores_lda, variable = train_lda$x1_mean_tech)
+
+# Plot LD1 scores by species
+ggplot(data_lda, aes(x = LD1, color = train_lda$x1_mean_tech)) + 
+  geom_density() + 
+  labs(title = "LD1 Plot")
+
+```
+* Assumption of equal variance: The assumption of equal variance in LDA is not fulfilled between the two groups, as can be seen from the plot, as the spread of the predicted values varies noticeably between the two.
+
+```{r LDA Assum 2 check, echo=FALSE, include=TRUE}
+plot(lda.fit)
+```
+
+### LDA- Results:  
+
+  * The accuracy of the model is 84.65%.  
+  * Sensitivity (true positive rate) : 0.9508 and Specificity (True negative rate) : 0.6875  
+  * Area under ROC is 0.819.  
+  * The prior probabilities of both the classes are not exactly the same (0.56 for class 0 and 0.43 for class 1) because of which predictions may be slightly biased as more tech tendency class is less reprensented in the data.  
+  * No Information Rate is 0.5714 which means most frequent class accounts for 57.14% of instances of the dataset. The accuracy is far more than baseline accuracy defined by no information rate which means the model is performing well.  
+  * The model shows that Dermatology (-3.67), Medical Oncology (-3.63) and Rheumatology(-3.57) are the three specialities having highest negative influence on mean tech tendency i.e workers of these specialities have lesser tehcnology tendency compared to reference speciality.  
+  * Other variables like Global.Rank, accuracy and Gender does not seem to have much influence on tech tendency as reflected by the small values of their LDA coefficients.
+
+```{r LDA Results, echo=TRUE, include=TRUE}
+
+# Checking prior probabilities
+priorp
+
+# calculating accuracy of the model
+acc_lda <- mean(lda.pred$class == test_lda$x1_mean_tech)
+cat("The accuracy of LDA model is", acc_lda, "\n")
+
+# Confusion Matrix - to check True/false positive/negatives]
+confusionMatrix(data=lda.pred$class, as.factor(test_lda$x1_mean_tech))
+cm_lda <- confusionMatrix(lda.pred$class, as.factor(test_lda$x1_mean_tech))
+cm_lda
+
+# Plot of confusion matrix
+plot(cm_lda$table, col = c("white", "blue"), 
+     main = paste("Confusion Matrix\n LDA"))
+
+# extracting coeficients of LDA model
+coef_summary <- coef(lda.fit)
+kable(coef_summary, caption = "LDA Coefficients", 
+      align = "c", booktabs = TRUE)
+
+# ROC Curve
+roc_lda <- roc(response = test_lda$x1_mean_tech, predictor = as.numeric(lda.pred$class))
+plot(roc_lda, main = "ROC Curve of LDA", col = "blue", print.auc = TRUE, legacy.axes = TRUE)
+
+```
+
+\newpage
+## Method 3: K-Nearest Neighbours  (KNN)
+
+  * KNN, a non-parametric method, is selected as it makes no underlying assumptions about how the data is distributed. 
+  * By calculating the distance to K nearest neighbours in the training set and assigning the most prevalent class, KNN forecasts the class of a data point.
+
+
+```{r KNN, echo=TRUE, include=TRUE}
+library(class)
+
+# splitting data into predictor and response variables for train and test set
+train.X <- cbind(train$final_primary_speciality, train$final_grad_year, train$Global.Rank, train$accuracy)
+test.X <- cbind(test$final_primary_speciality, test$final_grad_year, test$Global.Rank, test$accuracy)
+train.x1_mean_tech <- train[, "x1_mean_tech"]
+test.x1_mean_tech <- test[, "x1_mean_tech"]
+
+# setting seed
+set.seed (40385928)
+kn=10
+
+# creating a null vector of length kn to store knn mean/accuracy
+knn_accuracy=rep(0,kn) 
+
+# training and predicting using KNN Model for k = 1:10 using a for loop
+for(i in 1:kn){
+  set.seed(40385928)
+  knn.pred = knn(train.X, test.X, train$x1_mean_tech ,k=i)
+  knn_accuracy[i] = mean(knn.pred == test$x1_mean_tech)
+}
+
+# find the index of the maximum value in the vector
+best_index <- which.max(knn_accuracy)
+
+# Train the KNN model with the best value of K
+set.seed(40385928)
+knn_pred <- knn(train.X, test.X, train$x1_mean_tech, k = best_index)
+
+```
+
+### KNN- Results:  
+
+  * The accuracy of the model is approximately 59% which is relatively poor as baseline accuracy reflected by no information rate is 0.57 or 57.14% 
+  * Sensitivity : 0.7290 and Specificity : 0.4400. 
+  * Area under ROC curve is 0.58.  
+
+```{r KNN results, echo=TRUE, include=TRUE}
+
+# calculating accuracy of the model
+acc_knn <- knn_accuracy[best_index]
+ 
+cat("The highest accuracy is", acc_knn, "at index", best_index, "\n")
+
+# Confusion Matrix
+cm_knn <- confusionMatrix(knn_pred, test$x1_mean_tech)
+cm_knn
+
+# Plot of confusion matrix
+plot(cm_knn$table, col = c("white", "blue"), 
+     main = paste("Confusion Matrix\n KNN"))
+
+# ROC Curve
+
+roc_knn <- roc(response = test$x1_mean_tech, predictor = as.numeric(knn_pred))
+plot(roc_knn, main = "ROC Curve of KNN", col = "blue", print.auc = TRUE, legacy.axes = TRUE,xlab = "False Positive Rate", ylab = "True Positive Rate")
+
+```
+
+# K-Fold Cross validation for comparing above three models
+
+* The model's capacity to generalise to new data that it hasn't seen before is evaluated using cross-validation. K-fold cross-validation enables the model to be trained on numerous different iterations of the data set, lowering the risk of overfitting. Additionally, because it makes use of all of the accessible data for training and testing, it offers a more precise estimate of the model's performance.  
+* The outcome of cross validation gives performance metrics like accuracy, Kappa, accuracy SD and Kappa SD.  
+
+```{r K fold CV, echo=TRUE, include=TRUE}
+# K-fold value here is 10
+trControl <- trainControl(method  = "cv",number  = 10)
+
+# fitting LR with different k values 1:10
+fit_lr <- train(as.factor(x1_mean_tech)~.,
+             method     = "glm",
+             tuneGrid   = NULL,
+             trControl  = trControl,
+             data       = df_A02,
+             metric = "Accuracy")
+fit_lr$results
+
+# fitting LDA with different k values 1:10 
+fit_lda <- train(as.factor(x1_mean_tech)~.,
+             method     = "lda",
+             tuneGrid   = NULL,
+             trControl  = trControl,
+             data       = df_A02, 
+             metric = "Accuracy")
+fit_lda$results
+
+# fitting KNN with different k values 1:10
+fit_knn <- train(as.factor(x1_mean_tech)~.,
+             method     = "knn",
+             tuneGrid   = expand.grid(k = best_index),
+             trControl  = trControl,
+             data       = df_A02)
+fit_knn$results
+
+```
+
+
+# Data Analysis and Discussion
+
+## Comparing three models of Data set A  
+
+From the following table, it can be seen that both LR and LDA models work similarly, with accuracy of 0.8207 and kappa of 0.62. This shows that both models have strong predictive ability and can reliably identify instances. However, the accuracy and kappa standard deviations (SD) vary, with LDA having a marginally lower SD than LR. This shows that the LDA model performs more consistently when tested using various cross-validation folds.  
+On the contrary, KNN model has poor predictive power as reflective from lower accuracy (0.5395) and kappa (0.3) and higher SD for both parameters indicating that its performance is inconsistent across different sets of cross validation.  
+
+```{r Model comparison, echo=TRUE, include=TRUE}
+
+# Calculating Mean Error of three models
+mean_error_lr <- 1 - mean(fit_lr$results$Accuracy)
+cat("The mean error for LR model is", mean_error_lr, "\n")
+mean_error_lda <- 1 - mean(fit_lda$results$Accuracy)
+cat("The mean error for LDA model is", mean_error_lda, "\n")
+mean_error_knn <- 1 - mean(fit_knn$results$Accuracy)
+cat("The mean error for KNN model is", mean_error_knn)
+
+# Create data frames with cross-validation results for each model
+ lr_res <- data.frame(model = "LR", 
+                          accuracy = round(fit_lr$results$Accuracy,4),
+                          kappa = round(fit_lr$results$Kappa,2),
+                      acc_SD= round(fit_lr$results$AccuracySD,2),
+                      kappa_SD= round(fit_lr$results$KappaSD,2))
+ lda_res <- data.frame(model = "LDA", 
+                           accuracy = round(fit_lda$results$Accuracy,4),
+                           kappa = round(fit_lda$results$Kappa,2),
+                       acc_SD= round(fit_lda$results$AccuracySD,2),
+                       kappa_SD= round(fit_lda$results$KappaSD,2))
+ knn_res <- data.frame(model = "KNN", 
+                           accuracy = round(fit_knn$results$Accuracy,4),
+                           kappa = round(fit_knn$results$Kappa,2),
+                       acc_SD= round(fit_knn$results$AccuracySD,2),
+                       kappa_SD= round(fit_knn$results$KappaSD,2))
+
+ # Combine data frames into a single table
+ cv_results <- bind_rows(lr_res, lda_res, knn_res)
+ 
+ kable(cv_results,col.names = c("Model", "Accuracy", "Kappa", "Accuracy_SD","Kappa_SD"),
+       align = "c", caption = "Comparison of Three Models")
+ 
+ 
+ # Extract F1 score, precision, and recall
+ f1_score_lr <- round(cm_lr$byClass['F1'],2)
+ precision_lr <- round(cm_lr$byClass['Pos Pred Value'],2)
+ recall_lr <- round(cm_lr$byClass['Sensitivity'],2)
+ 
+ f1_score_lda <- round(cm_lda$byClass['F1'],2)
+ precision_lda <- round(cm_lda$byClass['Pos Pred Value'],2)
+ recall_lda <- round(cm_lda$byClass['Sensitivity'],2)
+ 
+ f1_score_knn <- round(cm_knn$byClass['F1'],2)
+ precision_knn <- round(cm_knn$byClass['Pos Pred Value'],2)
+ recall_knn <- round(cm_knn$byClass['Sensitivity'],2)
+ 
+ metrics_comp <- bind_rows(lr_res, lda_res, knn_res)
+ 
+ perf_met <- data.frame(model = c("LR", "LDA", "KNN"),
+                  f1_score = c(f1_score_lr, f1_score_lda, f1_score_knn),
+                  precision = c(precision_lr, precision_lda, precision_knn),
+                  recall = c(recall_lr, recall_lda, recall_knn))
+ 
+ # Print table
+ kable(perf_met, format = "markdown",align = "c", caption = "Metrics Comparison of Three Models")
+ 
+ # ROC curve for all three models in one plot
+plot(roc_lr, col = "red", legacy.axes=TRUE, print.auc=TRUE, main = "ROC curves for three models")
+lines(roc_lda, col = "blue",  legacy.axes=TRUE)
+lines(roc_knn, col = "green", legacy.axes=TRUE)
+# Add a legend
+legend("bottomright", legend = c("LR", "LDA", "KNN"), 
+       col = c("red", "blue", "green"), lty = 1)
+
+ 
+```
+
+## Insights from Dataset A  
+
+  
+As can be seen from the outcome below, primary specialities viz. Dermatology, obstetrics/Gynaecology, Opthalmology, Psychiatry are statistically significant and have lesser log odds of predicting technology tendency of the workers compared to cardiology which is reference speciality here when all other variables are kept constant. * As can be seen from the interaction term between specialisation and gender, which is not statistically significant according to the LR model, the **aforementioned behaviour of primary specialties are not reliant on gender**. However, it can be concluded from coefficients that amongst above 4 specialities male workers in Dermatology have log odds of tech tendency compared to their female counterpart,  The other variables Global Rank and gender do not have any statistical significance in predicting the tech tendency as reflected from higher p-value.  
+Coefficient of interaction term of Global Rank and Gender is 8.43e-05 which shows that effect of global rank on log odds of technology tendency does not vary much between males and females
+
+```{r Int Term, echo=TRUE, include=TRUE}
+
+###Impact of interaction terms: 
+set.seed(40385928)
+glm.fits_1 <- glm(x1_mean_tech ~ final_primary_speciality*final_gender + Global.Rank*final_gender, data = df_A02, family = binomial)
+summary(glm.fits_1)
+
+### extracting coefficients 
+coef_sum_1 <- summary(glm.fits_1)$coef
+
+```
+
+## Assessing Data with accuracy > 0.8 in Dataset A
+
+When LR was run on dataset A containing observations with accuracy above 0.8, the model accuracy remained around 82% which is the same as for whole dataseta A. Some of the specialities still remained statistically significant while gender and global rank are not that significant. The accuracy may be biased as the dataset is too small.
+
+```{r Accuracy above 0.8, echo=TRUE, include=TRUE}
+# create copy of dataset A
+df_A03 <-  df_A02
+
+# subsetting on accuracy > 0.8
+df_A03 <- subset(df_A03, accuracy >0.8)
+dim(df_A03)
+# convert primary specialty and final gender into factor
+df_A03$fin
+df_A03$final_primary_speciality <- as.factor(df_A03$final_primary_speciality)
+df_A03$final_gender <- as.factor(df_A03$final_gender)
+
+# Setting seed to run random repetition
+set.seed(40385928) 
+
+# splitting to be done based on taret variable, times=1 gives one set of data
+index_a3 <- createDataPartition(df_A03$x1_mean_tech, times=1, p=0.80, list=FALSE)
+
+
+# creating train and test data set
+train_a3 <- df_A03[index_a3,]
+test_a3 <- df_A03[-index_a3,]
+
+# Training the model
+glm.fits.a3 <- glm(x1_mean_tech ~ .,data = train_a3, family = "binomial")
+summary(glm.fits.a3)
+
+# Predicting the probability of test data
+glm.pred.a3 <- predict(glm.fits.a3, test_a3,type = "response")
+class_predict_a3 <- as.factor(ifelse(glm.pred.a3 > 0.5, "1", "0")) 
+postResample(class_predict_a3, test_a3$x1_mean_tech)
+
+# Confusion matrix 
+confusion_matrix_a3 <- confusionMatrix(data=class_predict_a3, test_a3$x1_mean_tech)
+confusion_matrix_a3
+# Plot of confusion matrix
+plot(confusion_matrix_a3$table, col = c("white", "red"), 
+     main = paste("Confusion Matrix\nAccuracy =", round(confusion_matrix_a3$overall['Accuracy'], 2)))
+
+
+# ROC calculation
+roc_a3 <- roc(test_a3$x1_mean_tech, glm.pred.a3)
+
+# Plot the ROC curve
+plot(roc_a3, col = "blue",xlim = c(1,0), print.thres = TRUE, print.auc = TRUE, grid = TRUE, main = "ROC Curve", xlab = "False Positive Rate", ylab = "True Positive Rate")
+
+
+```
+
+
+# PREDICTIVE MODELING USING LOGISTIC REGRESSION METHOD ON DATASET B- (Code in [Appendix:6](#6))
+
+The logistic regression model performed poorly with an accuracy of only 64.81% on Dataset B, which excluded GA and the top 10 specialities based on frequency table. Without interaction terms, all primary specialities, except Gastroenterology, showed statistical significance with negative coefficients, indicating that an increase in these specialties leads to a decrease in log odds of positive technology tendency. Gender was not significant. Global rank was slightly significant, indicating that workers graduated from higher-ranked colleges had a higher technology tendency. However, with interaction terms, none of the variables showed statistical significance.
+* summary for Dataset B [Appendix: 5a](#5a)
+
+```{r Summary B , echo = FALSE, include=FALSE}
+# summary
+dim(df_B)
+summary(df_B)
+
+# pre processing
+
+# frequency of primary speciality
+df_B %>% 
+  count(final_primary_speciality) %>% 
+  arrange(desc(n)) %>% 
+  kable(col.names = c("Specialty", "Count"), align = "c", caption = "Specialty counts in dataset B")
+
+# subsetting on top 10 specialities
+
+df_B01 <- df_B[df_B$final_primary_speciality %in% 
+                     c("FAMILY MEDICINE","INTERNAL MEDICINE","OBSTETRICS/GYNECOLOGY", "OPHTHALMOLOGY", "CARDIOVASCULAR DISEASE (CARDIOLOGY)","DERMATOLOGY", "OTOLARYNGOLOGY","GASTROENTEROLOGY","PSYCHIATRY","ORTHOPEDIC SURGERY"),]
+
+# dropping null levels
+df_B01$final_primary_speciality <- droplevels(df_B01$final_primary_speciality)                   
+levels(df_B01$final_primary_speciality)
+table(df_B01$x1_mean_tech)
+```
+
+* Logistic Regression Model on Dataset B [Appendix: 5b](#5b)
+
+```{r LR Model B, echo=FALSE, include=FALSE}
+# LR Model
+# converting response variable into factor
+df_B01$x1_mean_tech <- as.factor(df_B01$x1_mean_tech)
+
+# set seed for randomness
+set.seed(40385928) 
+
+# creating partition to split data into 80-20 ratio
+index_b <- createDataPartition(df_B01$x1_mean_tech, p=0.8, list=FALSE) 
+
+# train data set containing 80% data
+train_b <- df_B01[index,] #
+
+# test data set containing 20% data
+test_b <- df_B01[-index,]
+
+# LR model fitting on train dataset 
+glm.fits_b <- glm(x1_mean_tech ~ final_primary_speciality + final_gender + Global.Rank + accuracy, data = train_b, family = "binomial")
+summary(glm.fits_b)
+
+# prediction on test dataset using trained model
+predictions_b <- predict.glm(glm.fits_b, test_b,family = "binomial", type="response") 
+
+# changing numeric values of predictions into factor ; >0.5 as 1 and <0.5 as 0
+class_predict_b <- as.factor(ifelse(predictions_b > 0.5, "1", "0"))  
+
+
+# checking performance of prediction model
+outcome_lr_b <- postResample(class_predict_b, test_b$x1_mean_tech) 
+acc_lr_b <- outcome_lr_b["Accuracy"]
+
+# Confusion Matrix - to check True/false positive/negatives]
+cm_lr_b <- confusionMatrix(data=class_predict_b, test_b$x1_mean_tech)  
+cm_lr_b  
+cat("The accuracy of Logistic Regression model is", acc_lr_b, "\n")  
+
+# extracting coeficients of LR model
+coef_summary_b <- summary(glm.fits_b)$coef
+kable(coef_summary_b, caption = "Logistic Regression Coefficients", 
+      align = "c", booktabs = TRUE)
+
+# ROC Curve
+roc_lr_b <- roc(response = test_b$x1_mean_tech, predictor = as.numeric(class_predict_b))
+plot(roc_lr_b, main = "ROC Curve", col = "blue", print.auc = TRUE, legacy.axes = TRUE)
+
+```
+
+* Interaction term for Dataset B- [Appendix: 5c](#5c)
+
+```{r Int Term B, echo=FALSE, include=FALSE}
+
+###Impact of interaction terms: 
+glm.fits_b1 <- glm(x1_mean_tech ~ final_primary_speciality*final_gender + Global.Rank*final_gender, data = df_B01, family = binomial)
+summary(glm.fits_b1)
+
+### extracting coefficients 
+coef_sum_b <- summary(glm.fits_b1)$coef
+kable(coef_sum_b, caption = "Logistic Regression Coefficients", 
+      align = "c", booktabs = TRUE)
+```
+
+## Result discussion - - Comparing DataSet A and Dataset B  
+Dataset A outperformed Dataset B in logistic regression and LDA despite having fewer observations, possibly due to class imbalance. Global Rank was significant in Dataset B but not in A.
+
+\newpage
+# Conclusion and Recommendations
+The report aims to build a predictive model using supervised learning machine learning methods to predict tech tendency of healthcare workers. The given dataset has been statistically summarized, cleaned, and preprocessed. Graphical exploration shows the distribution of observations across states and specialties. Mean_tech is chosen as the target variable and converted into a binary response variable. Logistic regression model performed the best on both datasets.
+
+\newpage
+# References {-}
+
+1. Gareth, J., Daniela, W., Trevor, H., & Robert, T. (2021). An introduction to statistical learning: with applications in R. Spinger, Second Edition. <https://www.statlearning.com/>
+
+2. Chen, S.B., Zhang, Y.M., Ding, C.H., Zhang, J. and Luo, B., 2019. Extended adaptive Lasso for multi-class and multi-label feature selection. Knowledge-Based Systems, 173, pp.28-36.
+
+\newpage
+# Appendices {-}
+Please see Appendix \@ref(appendix_label) for additional figures. use this in above text to refer to appendix label (it should create a hyperlink after knitting)
+
+- Data reading-summary:
+
+# Appendix 1: Data Load {#1}
+
+```{r Data Load1, eval=FALSE}
+df <- read.csv("/Users/jyotismac/Documents/BUSINESS ANALYTICS/DATA SETS/dataset-four_states- GA - PR - UT - AR - student 160 .csv")
+```
+
+# Appendix 2: Stats Summary {#2}
+
+```{r 2, ref.label="Stats Summary", echo = TRUE, eval=TRUE}
+
+```
+
+# Appendix 3: Preprocessing {#3}  
+  * Appendix 3a: Dealing with null values {#3a}
+
+```{r 3a, ref.label= "Null values",echo= TRUE, eval=FALSE}
+
+```
+  
+  * Appendix 3b: Dealing with Duplicates {#3b}
+  
+```{r 3b, ref.label= "Dealing Duplicates", echo= TRUE, eval=FALSE}
+
+```
+ 
+ * Appendix 3c: Dealing with Accuracy {#3c}
+  
+```{r 3c, ref.label= "Dealing Accuracy", echo= TRUE, eval=TRUE}
+
+```
+
+ * Appendix 3d: Density distribution {#3d}
+  
+```{r 3d, ref.label= "Dealing Duplicates", echo= TRUE, eval=FALSE}
+
+```
+
+ * Appendix 3e: Converting Response Variable in Binary {#3e}
+  
+```{r 3e, ref.label= "Choose response", echo= TRUE, eval=TRUE}
+
+```
+
+# Appendix 4: Creating Subset Dataset A and B {#4}  
+
+  * Appendix 4a: State Subset {#4a}
+
+```{r 4a, ref.label= "State Subset", echo= TRUE, eval=TRUE}
+
+```
+
+  * Appendix 4b: LASSO for feature selection- primary speciality {#4b}
+
+```{r 4b, ref.label= "LASSO", echo= TRUE, eval=TRUE}
+
+```
+
+  * Appendix 4c: Selection of top 10 primary speciality {#4c}
+
+```{r 4c, ref.label= "PS10", echo= TRUE, eval=TRUE}
+
+```
+
+  * Appendix 4d: Dataset A subset on top 10 primary speciality {#4d}
+
+```{r 4d, ref.label= "PS subset", echo= TRUE, eval=TRUE}
+
+```
+
+
+# Appendix 5: Predictive modelling on Dataset B {#5}  
+
+  * Appendix 5a: Summary of Dataset B {#5a}
+
+```{r 5a, ref.label= "Summary B", echo= TRUE, eval=TRUE}
+
+```
+
+  * Appendix 5b: LR model on Dataset B {#5b}
+
+```{r 5b, ref.label= "LR Model B", echo= TRUE, eval=TRUE}
+
+```
+
+  * Appendix 6c: Interaction Term on Dataset B {#5c}
+
+```{r 5c, ref.label= "Int Term B", echo= TRUE, eval=TRUE}
+
+```
